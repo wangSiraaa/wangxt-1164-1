@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: windfarm_boarding
+      POSTGRES_USER: windfarm
+      POSTGRES_PASSWORD: windfarm
+    ports:
+      - "21464:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U windfarm -d windfarm_boarding"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "22464:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./backend
+    ports:
+      - "19464:19464"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://windfarm:windfarm@db:5432/windfarm_boarding
+      REDIS_URL: redis://redis:6379/0
+
+  web:
+    build: ./frontend
+    ports:
+      - "20464:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
