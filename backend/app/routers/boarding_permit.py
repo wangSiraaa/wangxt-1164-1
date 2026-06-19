@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -40,7 +40,7 @@ def _to_read(permit: BoardingPermit, db: Session) -> BoardingPermitRead:
 
 
 @router.get("/", response_model=List[BoardingPermitRead])
-def list_permits(status: str | None = None, db: Session = Depends(get_db)):
+def list_permits(status: Optional[str] = None, db: Session = Depends(get_db)):
     q = db.query(BoardingPermit)
     if status:
         q = q.filter(BoardingPermit.status == status)

@@ -7,7 +7,15 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    let detail = text || res.statusText;
+    try {
+      const json = JSON.parse(text);
+      if (json.detail) {
+        detail = typeof json.detail === 'string' ? json.detail : JSON.stringify(json.detail);
+      }
+    } catch {
+    }
+    throw new Error(detail);
   }
   return res.json();
 }

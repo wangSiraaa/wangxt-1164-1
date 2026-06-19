@@ -75,8 +75,8 @@ const PermitPage: React.FC = () => {
       setModalOpen(false);
       form.resetFields();
       fetchData();
-    } catch {
-      message.error('创建失败');
+    } catch (e) {
+      message.error((e as Error).message || '创建失败');
     }
   };
 
@@ -90,8 +90,8 @@ const PermitPage: React.FC = () => {
       await boardingPermitApi.captainConfirm(id, captains[0].id!);
       message.success('船长确认成功');
       fetchData();
-    } catch {
-      message.error('船长确认失败');
+    } catch (e) {
+      message.error((e as Error).message || '船长确认失败');
     }
   };
 
@@ -105,8 +105,8 @@ const PermitPage: React.FC = () => {
       await boardingPermitApi.safetyClear(id, officers[0].id!);
       message.success('安全放行成功');
       fetchData();
-    } catch {
-      message.error('安全放行失败');
+    } catch (e) {
+      message.error((e as Error).message || '安全放行失败');
     }
   };
 
@@ -119,8 +119,8 @@ const PermitPage: React.FC = () => {
       setRejectTarget(null);
       rejectForm.resetFields();
       fetchData();
-    } catch {
-      message.error('驳回失败');
+    } catch (e) {
+      message.error((e as Error).message || '驳回失败');
     }
   };
 

@@ -113,10 +113,14 @@ class BoardingPermitService:
         if not latest:
             raise HTTPException(status_code=422, detail="无海况记录，不能登船")
 
+        plan = db.query(MaintenancePlan).filter(MaintenancePlan.id == permit.maintenance_plan_id).first()
+        if not plan:
+            raise HTTPException(status_code=422, detail="关联的运维计划不存在，不能登船")
+
         windows = (
             db.query(OperationWindow)
             .filter(
-                OperationWindow.work_position_id == permit.maintenance_plan_id,
+                OperationWindow.work_position_id == plan.work_position_id,
                 OperationWindow.start_time <= permit.boarding_date,
                 OperationWindow.end_time >= permit.boarding_date,
             )
@@ -125,25 +129,29 @@ class BoardingPermitService:
 
         if not windows:
             if not latest.is_navigable:
-                raise HTTPException(status_code=422, detail="海况不满足窗口要求，不能登船")
+                raise HTTPException(status_code=422, detail="该作业机位在登乘时间无可用作业窗口，且当前海况不适航，不能登船")
             return
 
+        violations: list[str] = []
         for w in windows:
             if latest.wave_height > w.max_wave_height:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"浪高{latest.wave_height}m超过窗口上限{w.max_wave_height}m，不能登船",
+                violations.append(
+                    f"浪高{latest.wave_height}m超过窗口上限{w.max_wave_height}m"
                 )
             if latest.wind_speed > w.max_wind_speed:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"风速{latest.wind_speed}m/s超过窗口上限{w.max_wind_speed}m/s，不能登船",
+                violations.append(
+                    f"风速{latest.wind_speed}m/s超过窗口上限{w.max_wind_speed}m/s"
                 )
             if latest.visibility < w.min_visibility:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"能见度{latest.visibility}km低于窗口下限{w.min_visibility}km，不能登船",
+                violations.append(
+                    f"能见度{latest.visibility}km低于窗口下限{w.min_visibility}km"
                 )
+
+        if violations:
+            raise HTTPException(
+                status_code=422,
+                detail="海况不满足作业窗口要求，不能登船：" + "；".join(violations),
+            )
 
     def _check_vessel_capacity(self, db: Session, permit: BoardingPermit):
         from app.models.vessel import Vessel

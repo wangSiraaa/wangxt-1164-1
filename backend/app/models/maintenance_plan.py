@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Optional
 
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -15,7 +16,7 @@ class MaintenancePlan(Base):
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     work_position_id: Mapped[str] = mapped_column(String(36), ForeignKey("work_position.id"), nullable=False)
     plan_date: Mapped[date] = mapped_column(nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text)
     risk_level: Mapped[str] = mapped_column(String(16), nullable=False, default="low")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
