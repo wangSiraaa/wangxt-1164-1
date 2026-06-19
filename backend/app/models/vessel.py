@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -14,7 +15,11 @@ class Vessel(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
+    life_raft_count: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    life_jacket_count: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    first_aid_kit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     vessel_type: Mapped[str] = mapped_column(String(64), nullable=False, default="transfer")
+    operation_license: Mapped[Optional[str]] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)

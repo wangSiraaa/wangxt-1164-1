@@ -10,6 +10,10 @@ from app.schemas.boarding_permit import (
     BoardingPermitCreate,
     BoardingPermitRead,
     CaptainConfirmRequest,
+    CaptainRejectRequest,
+    PersonnelUpdateRequest,
+    PreCheckResponse,
+    RescheduleRequest,
     RejectRequest,
     SafetyClearRequest,
 )
@@ -33,6 +37,17 @@ def _to_read(permit: BoardingPermit, db: Session) -> BoardingPermitRead:
         safety_officer_id=permit.safety_officer_id,
         safety_cleared_at=permit.safety_cleared_at,
         rejection_reason=permit.rejection_reason,
+        reschedule_suggestion=permit.reschedule_suggestion,
+        suggested_boarding_date=permit.suggested_boarding_date,
+        sea_condition_met=permit.sea_condition_met,
+        capacity_checked=permit.capacity_checked,
+        life_equipment_checked=permit.life_equipment_checked,
+        operation_license_checked=permit.operation_license_checked,
+        life_equipment_count=permit.life_equipment_count,
+        operation_license_number=permit.operation_license_number,
+        requires_reapproval=permit.requires_reapproval,
+        reapproval_reason=permit.reapproval_reason,
+        personnel_changed=permit.personnel_changed,
         personnel=personnel,
         created_at=permit.created_at,
         updated_at=permit.updated_at,
@@ -46,6 +61,11 @@ def list_permits(status: Optional[str] = None, db: Session = Depends(get_db)):
         q = q.filter(BoardingPermit.status == status)
     permits = q.order_by(BoardingPermit.created_at.desc()).all()
     return [_to_read(p, db) for p in permits]
+
+
+@router.post("/pre-check", response_model=PreCheckResponse)
+def pre_check_permit(data: BoardingPermitCreate, db: Session = Depends(get_db)):
+    return boarding_permit_service.pre_check(db, data)
 
 
 @router.post("/", response_model=BoardingPermitRead, status_code=201)
@@ -68,9 +88,37 @@ def captain_confirm(permit_id: str, req: CaptainConfirmRequest, db: Session = De
     return _to_read(permit, db)
 
 
+@router.post("/{permit_id}/captain-reject", response_model=BoardingPermitRead)
+def captain_reject(permit_id: str, req: CaptainRejectRequest, db: Session = Depends(get_db)):
+    permit = boarding_permit_service.captain_reject(db, permit_id, req)
+    return _to_read(permit, db)
+
+
+@router.post("/{permit_id}/reschedule", response_model=BoardingPermitRead)
+def reschedule_permit(permit_id: str, req: RescheduleRequest, db: Session = Depends(get_db)):
+    permit = boarding_permit_service.reschedule(db, permit_id, req)
+    return _to_read(permit, db)
+
+
 @router.post("/{permit_id}/safety-clear", response_model=BoardingPermitRead)
 def safety_clear(permit_id: str, req: SafetyClearRequest, db: Session = Depends(get_db)):
     permit = boarding_permit_service.safety_clear(db, permit_id, req)
+    return _to_read(permit, db)
+
+
+@router.post("/{permit_id}/update-personnel", response_model=BoardingPermitRead)
+def update_personnel(permit_id: str, req: PersonnelUpdateRequest, db: Session = Depends(get_db)):
+    permit = boarding_permit_service.update_personnel(db, permit_id, req)
+    return _to_read(permit, db)
+
+
+@router.post("/{permit_id}/reapprove", response_model=BoardingPermitRead)
+def reapprove_permit(
+    permit_id: str,
+    safety_officer_id: str,
+    db: Session = Depends(get_db),
+):
+    permit = boarding_permit_service.reapprove(db, permit_id, safety_officer_id)
     return _to_read(permit, db)
 
 

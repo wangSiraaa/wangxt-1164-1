@@ -42,7 +42,17 @@ def seed_work_position(db: Session):
 
 @pytest.fixture
 def seed_vessel(db: Session):
-    v = Vessel(name="测试船01", code="V-001", capacity=10, vessel_type="运维船", status="active")
+    v = Vessel(
+        name="测试船01",
+        code="V-001",
+        capacity=10,
+        life_raft_count=2,
+        life_jacket_count=20,
+        first_aid_kit_count=3,
+        vessel_type="运维船",
+        operation_license="OP-LICENSE-001",
+        status="active",
+    )
     db.add(v)
     db.flush()
     return v
@@ -186,6 +196,7 @@ def seed_certificate_valid(db: Session, seed_crew: Personnel):
         cert_number="CERT-001",
         issue_date=datetime(2024, 1, 1).date(),
         expiry_date=(datetime.utcnow() + timedelta(days=365)).date(),
+        allowed_risk_level="high",
         is_valid=True,
     )
     db.add(cert)
@@ -201,11 +212,39 @@ def seed_certificate_expired(db: Session, seed_crew: Personnel):
         cert_number="CERT-002",
         issue_date=datetime(2020, 1, 1).date(),
         expiry_date=datetime(2023, 1, 1).date(),
+        allowed_risk_level="low",
         is_valid=False,
     )
     db.add(cert)
     db.flush()
     return cert
+
+
+@pytest.fixture
+def seed_certificate_low_risk(db: Session, seed_crew: Personnel):
+    cert = PersonnelCertificate(
+        personnel_id=seed_crew.id,
+        cert_type="海上作业证",
+        cert_number="CERT-003",
+        issue_date=datetime(2024, 1, 1).date(),
+        expiry_date=(datetime.utcnow() + timedelta(days=365)).date(),
+        allowed_risk_level="low",
+        is_valid=True,
+    )
+    db.add(cert)
+    db.flush()
+    return cert
+
+
+@pytest.fixture
+def seed_safety_clear_request(seed_safety_officer: Personnel):
+    from app.schemas.boarding_permit import SafetyClearRequest
+
+    return SafetyClearRequest(
+        safety_officer_id=seed_safety_officer.id,
+        life_equipment_count=20,
+        operation_license_number="OP-LICENSE-001",
+    )
 
 
 @pytest.fixture

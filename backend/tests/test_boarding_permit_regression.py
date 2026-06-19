@@ -10,11 +10,17 @@ from app.models import (
     MaintenancePlan,
     OperationWindow,
     Personnel,
+    PersonnelCertificate,
     SeaCondition,
     Vessel,
     WorkPosition,
 )
-from app.schemas.boarding_permit import CaptainConfirmRequest, SafetyClearRequest
+from app.schemas.boarding_permit import (
+    CaptainConfirmRequest,
+    PersonnelUpdateRequest,
+    RescheduleRequest,
+    SafetyClearRequest,
+)
 from app.services.boarding_permit import boarding_permit_service
 
 
@@ -163,14 +169,14 @@ class TestCertificateCheck:
         seed_permit_submitted: BoardingPermit,
         seed_certificate_expired,
         seed_safety_officer: Personnel,
+        seed_safety_clear_request: SafetyClearRequest,
     ):
         seed_permit_submitted.status = "captain_confirmed"
         seed_permit_submitted.captain_id = "captain-uuid"
         db.flush()
 
-        req = SafetyClearRequest(safety_officer_id=seed_safety_officer.id)
         with pytest.raises(HTTPException) as exc_info:
-            boarding_permit_service.safety_clear(db, seed_permit_submitted.id, req)
+            boarding_permit_service.safety_clear(db, seed_permit_submitted.id, seed_safety_clear_request)
         assert exc_info.value.status_code == 422
         assert "过期" in exc_info.value.detail
 
@@ -181,14 +187,17 @@ class TestCertificateCheck:
         seed_certificate_valid,
         seed_safety_officer: Personnel,
         seed_work_position: WorkPosition,
+        seed_safety_clear_request: SafetyClearRequest,
     ):
         seed_permit_submitted.status = "captain_confirmed"
         seed_permit_submitted.captain_id = "captain-uuid"
         db.flush()
 
-        req = SafetyClearRequest(safety_officer_id=seed_safety_officer.id)
-        result = boarding_permit_service.safety_clear(db, seed_permit_submitted.id, req)
+        result = boarding_permit_service.safety_clear(db, seed_permit_submitted.id, seed_safety_clear_request)
         assert result.status == "safety_cleared"
+        assert result.life_equipment_checked == True
+        assert result.operation_license_checked == True
+        assert result.capacity_checked == True
 
 
 class TestHighRiskPositionConflict:
@@ -202,6 +211,7 @@ class TestHighRiskPositionConflict:
         seed_crew: Personnel,
         seed_vessel: Vessel,
         seed_work_position: WorkPosition,
+        seed_safety_clear_request: SafetyClearRequest,
     ):
         existing_plan = MaintenancePlan(
             plan_code="MP-2025-CONFLICT",
@@ -233,11 +243,10 @@ class TestHighRiskPositionConflict:
         seed_permit_submitted.captain_id = "captain-uuid"
         db.flush()
 
-        req = SafetyClearRequest(safety_officer_id=seed_safety_officer.id)
         with pytest.raises(HTTPException) as exc_info:
-            boarding_permit_service.safety_clear(db, seed_permit_submitted.id, req)
+            boarding_permit_service.safety_clear(db, seed_permit_submitted.id, seed_safety_clear_request)
         assert exc_info.value.status_code == 422
-        assert "高风险作业在进行" in exc_info.value.detail
+        assert "高风险作业" in exc_info.value.detail
 
     def test_different_position_no_conflict(
         self,
@@ -248,6 +257,7 @@ class TestHighRiskPositionConflict:
         seed_safety_officer: Personnel,
         seed_crew: Personnel,
         seed_vessel: Vessel,
+        seed_safety_clear_request: SafetyClearRequest,
     ):
         other_wp = WorkPosition(code="WP-OTHER", name="其他机位", risk_level="high", is_active=True)
         db.add(other_wp)
@@ -280,6 +290,297 @@ class TestHighRiskPositionConflict:
         seed_permit_submitted.captain_id = "captain-uuid"
         db.flush()
 
-        req = SafetyClearRequest(safety_officer_id=seed_safety_officer.id)
-        result = boarding_permit_service.safety_clear(db, seed_permit_submitted.id, req)
+        result = boarding_permit_service.safety_clear(db, seed_permit_submitted.id, seed_safety_clear_request)
         assert result.status == "safety_cleared"
+
+
+class TestPreSubmitCheck:
+    def test_pre_check_certificate_valid_passed(
+        self,
+        db: Session,
+        seed_maintenance_plan: MaintenancePlan,
+        seed_vessel: Vessel,
+        seed_crew: Personnel,
+        seed_certificate_valid,
+    ):
+        from app.schemas.boarding_permit import BoardingPermitCreate, BoardingPersonnelItem
+
+        data = BoardingPermitCreate(
+            permit_code="BP-PRECHECK-001",
+            maintenance_plan_id=seed_maintenance_plan.id,
+            vessel_id=seed_vessel.id,
+            boarding_date=datetime(2025, 1, 15, 8, 0, 0),
+            submitted_by="运维负责人",
+            personnel=[BoardingPersonnelItem(personnel_id=seed_crew.id, role_on_board="船员")],
+        )
+        result = boarding_permit_service.pre_check(db, data)
+        assert result.all_passed == True
+        assert result.certificate_check.passed == True
+        assert result.position_risk_check.passed == True
+        assert result.same_day_high_risk_check.passed == True
+
+    def test_pre_check_certificate_risk_mismatch_blocked(
+        self,
+        db: Session,
+        seed_maintenance_plan: MaintenancePlan,
+        seed_vessel: Vessel,
+        seed_crew: Personnel,
+        seed_certificate_low_risk,
+        seed_work_position: WorkPosition,
+    ):
+        from app.schemas.boarding_permit import BoardingPermitCreate, BoardingPersonnelItem
+
+        seed_work_position.risk_level = "high"
+        db.flush()
+
+        data = BoardingPermitCreate(
+            permit_code="BP-PRECHECK-002",
+            maintenance_plan_id=seed_maintenance_plan.id,
+            vessel_id=seed_vessel.id,
+            boarding_date=datetime(2025, 1, 15, 8, 0, 0),
+            submitted_by="运维负责人",
+            personnel=[BoardingPersonnelItem(personnel_id=seed_crew.id, role_on_board="船员")],
+        )
+        result = boarding_permit_service.pre_check(db, data)
+        assert result.all_passed == False
+        assert result.position_risk_check.passed == False
+        assert "不足以承担" in result.position_risk_check.details[0]
+
+    def test_pre_check_same_day_high_risk_blocked(
+        self,
+        db: Session,
+        seed_maintenance_plan: MaintenancePlan,
+        seed_vessel: Vessel,
+        seed_crew: Personnel,
+        seed_certificate_valid,
+        seed_work_position: WorkPosition,
+    ):
+        from app.schemas.boarding_permit import BoardingPermitCreate, BoardingPersonnelItem
+
+        existing_plan = MaintenancePlan(
+            plan_code="MP-EXISTING",
+            title="已有高风险计划",
+            work_position_id=seed_work_position.id,
+            plan_date=datetime(2025, 1, 15).date(),
+            risk_level="high",
+            status="approved",
+            created_by="其他",
+        )
+        db.add(existing_plan)
+        db.flush()
+
+        existing_permit = BoardingPermit(
+            permit_code="BP-EXISTING",
+            maintenance_plan_id=existing_plan.id,
+            vessel_id=seed_vessel.id,
+            boarding_date=datetime(2025, 1, 15, 8, 0, 0),
+            status="safety_cleared",
+            submitted_by="其他",
+        )
+        db.add(existing_permit)
+        db.flush()
+
+        data = BoardingPermitCreate(
+            permit_code="BP-PRECHECK-003",
+            maintenance_plan_id=seed_maintenance_plan.id,
+            vessel_id=seed_vessel.id,
+            boarding_date=datetime(2025, 1, 15, 8, 0, 0),
+            submitted_by="运维负责人",
+            personnel=[BoardingPersonnelItem(personnel_id=seed_crew.id, role_on_board="船员")],
+        )
+        result = boarding_permit_service.pre_check(db, data)
+        assert result.all_passed == False
+        assert result.same_day_high_risk_check.passed == False
+        assert "禁止重复派队" in result.same_day_high_risk_check.details[0]
+
+
+class TestCaptainSeaConditionReject:
+    def test_sea_condition_rejected_with_reschedule_suggestion(
+        self,
+        db: Session,
+        seed_permit_submitted: BoardingPermit,
+        seed_operation_window: OperationWindow,
+        seed_sea_condition_wave_high: SeaCondition,
+        captain_confirm_request: CaptainConfirmRequest,
+    ):
+        from datetime import timedelta
+
+        captain_confirm_request.reschedule_suggestion = "建议3天后（1月18日）再安排登乘"
+        captain_confirm_request.suggested_boarding_date = (datetime(2025, 1, 15) + timedelta(days=3)).date()
+
+        with pytest.raises(HTTPException) as exc_info:
+            boarding_permit_service.captain_confirm(db, seed_permit_submitted.id, captain_confirm_request)
+        assert exc_info.value.status_code == 422
+
+        db.refresh(seed_permit_submitted)
+        assert seed_permit_submitted.status == "sea_rejected"
+        assert seed_permit_submitted.sea_condition_met == False
+        assert seed_permit_submitted.reschedule_suggestion == "建议3天后（1月18日）再安排登乘"
+        assert seed_permit_submitted.suggested_boarding_date is not None
+
+
+class TestSafetyClearTripleCheck:
+    def test_life_equipment_insufficient_blocked(
+        self,
+        db: Session,
+        seed_permit_submitted: BoardingPermit,
+        seed_certificate_valid,
+        seed_safety_officer: Personnel,
+    ):
+        seed_permit_submitted.status = "captain_confirmed"
+        seed_permit_submitted.captain_id = "captain-uuid"
+        db.flush()
+
+        req = SafetyClearRequest(
+            safety_officer_id=seed_safety_officer.id,
+            life_equipment_count=0,
+            operation_license_number="OP-LICENSE-001",
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            boarding_permit_service.safety_clear(db, seed_permit_submitted.id, req)
+        assert exc_info.value.status_code == 422
+        assert "救生衣数量" in exc_info.value.detail
+
+    def test_operation_license_mismatch_blocked(
+        self,
+        db: Session,
+        seed_permit_submitted: BoardingPermit,
+        seed_certificate_valid,
+        seed_safety_officer: Personnel,
+    ):
+        seed_permit_submitted.status = "captain_confirmed"
+        seed_permit_submitted.captain_id = "captain-uuid"
+        db.flush()
+
+        req = SafetyClearRequest(
+            safety_officer_id=seed_safety_officer.id,
+            life_equipment_count=20,
+            operation_license_number="WRONG-LICENSE",
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            boarding_permit_service.safety_clear(db, seed_permit_submitted.id, req)
+        assert exc_info.value.status_code == 422
+        assert "作业许可证编号" in exc_info.value.detail
+
+
+class TestPersonnelChangeReapproval:
+    def test_personnel_change_after_clear_requires_reapproval(
+        self,
+        db: Session,
+        seed_permit_submitted: BoardingPermit,
+        seed_certificate_valid,
+        seed_safety_clear_request: SafetyClearRequest,
+        seed_safety_officer: Personnel,
+        seed_crew: Personnel,
+    ):
+        seed_permit_submitted.status = "captain_confirmed"
+        seed_permit_submitted.captain_id = "captain-uuid"
+        db.flush()
+
+        permit = boarding_permit_service.safety_clear(db, seed_permit_submitted.id, seed_safety_clear_request)
+        assert permit.status == "safety_cleared"
+
+        new_person = Personnel(name="新船员", employee_id="NEW001", role="crew", phone="13800000004")
+        db.add(new_person)
+        db.flush()
+
+        new_cert = PersonnelCertificate(
+            personnel_id=new_person.id,
+            cert_type="海上作业证",
+            cert_number="CERT-NEW",
+            issue_date=datetime(2024, 1, 1).date(),
+            expiry_date=(datetime.utcnow() + timedelta(days=365)).date(),
+            allowed_risk_level="high",
+            is_valid=True,
+        )
+        db.add(new_cert)
+        db.flush()
+
+        update_req = PersonnelUpdateRequest(
+            personnel=[
+                {"personnel_id": seed_crew.id, "role_on_board": "船员"},
+                {"personnel_id": new_person.id, "role_on_board": "船员"},
+            ],
+            change_reason="人员调整，增加一名船员",
+            updated_by="运维负责人",
+        )
+        updated = boarding_permit_service.update_personnel(db, permit.id, update_req)
+
+        assert updated.status == "pending_reapproval"
+        assert updated.requires_reapproval == True
+        assert updated.personnel_changed == True
+        assert updated.reapproval_reason == "人员调整，增加一名船员"
+
+    def test_reapprove_after_personnel_change(
+        self,
+        db: Session,
+        seed_permit_submitted: BoardingPermit,
+        seed_certificate_valid,
+        seed_safety_clear_request: SafetyClearRequest,
+        seed_safety_officer: Personnel,
+        seed_crew: Personnel,
+    ):
+        seed_permit_submitted.status = "captain_confirmed"
+        seed_permit_submitted.captain_id = "captain-uuid"
+        db.flush()
+
+        permit = boarding_permit_service.safety_clear(db, seed_permit_submitted.id, seed_safety_clear_request)
+
+        new_person = Personnel(name="新船员", employee_id="NEW002", role="crew", phone="13800000005")
+        db.add(new_person)
+        db.flush()
+
+        new_cert = PersonnelCertificate(
+            personnel_id=new_person.id,
+            cert_type="海上作业证",
+            cert_number="CERT-NEW2",
+            issue_date=datetime(2024, 1, 1).date(),
+            expiry_date=(datetime.utcnow() + timedelta(days=365)).date(),
+            allowed_risk_level="high",
+            is_valid=True,
+        )
+        db.add(new_cert)
+        db.flush()
+
+        update_req = PersonnelUpdateRequest(
+            personnel=[
+                {"personnel_id": new_person.id, "role_on_board": "船员"},
+            ],
+            change_reason="更换船员",
+            updated_by="运维负责人",
+        )
+        updated = boarding_permit_service.update_personnel(db, permit.id, update_req)
+        assert updated.status == "pending_reapproval"
+
+        reapproved = boarding_permit_service.reapprove(db, updated.id, seed_safety_officer.id)
+        assert reapproved.status == "safety_cleared"
+        assert reapproved.requires_reapproval == False
+
+
+class TestReschedule:
+    def test_reschedule_after_sea_rejected(
+        self,
+        db: Session,
+        seed_permit_submitted: BoardingPermit,
+        seed_operation_window: OperationWindow,
+        seed_sea_condition_wave_high: SeaCondition,
+        captain_confirm_request: CaptainConfirmRequest,
+    ):
+        with pytest.raises(HTTPException):
+            boarding_permit_service.captain_confirm(db, seed_permit_submitted.id, captain_confirm_request)
+
+        db.refresh(seed_permit_submitted)
+        assert seed_permit_submitted.status == "sea_rejected"
+
+        new_date = datetime(2025, 1, 20, 8, 0, 0)
+        reschedule_req = RescheduleRequest(
+            boarding_date=new_date,
+            reschedule_reason="海况不佳，改期执行",
+            updated_by="运维负责人",
+        )
+        rescheduled = boarding_permit_service.reschedule(db, seed_permit_submitted.id, reschedule_req)
+
+        assert rescheduled.status == "submitted"
+        assert rescheduled.boarding_date == new_date
+        assert rescheduled.rejection_reason is None
+        assert rescheduled.sea_condition_met is None

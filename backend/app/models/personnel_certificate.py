@@ -16,6 +16,7 @@ class PersonnelCertificate(Base):
     cert_number: Mapped[str] = mapped_column(String(128), nullable=False)
     issue_date: Mapped[date] = mapped_column(Date, nullable=False)
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    allowed_risk_level: Mapped[str] = mapped_column(String(16), nullable=False, default="low")
     is_valid: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
